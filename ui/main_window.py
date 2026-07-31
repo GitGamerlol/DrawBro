@@ -17,7 +17,7 @@ from tools.bucket import BucketTool
 from tools.eyedropper import EyedropperTool
 from tools.smooth import SmoothTool
 
-from DrawBro.core.frame import Frame
+from core.frame import Frame
 
 from core.layer_commands import (
     AddLayerCommand, RemoveLayerCommand, DuplicateLayerCommand, RenameLayerCommand,
