@@ -39,6 +39,9 @@ class CanvasWidget(QWidget):
         self.eraser_tool = EraserTool()
         self.active_tool = self.pen_tool
 
+        # Tools default color (black)
+        self.pen_tool.color = (0, 0, 0, 255)
+
         # History
         self.history = HistoryManager()
 
@@ -106,7 +109,7 @@ class CanvasWidget(QWidget):
             # Start drawing
             self._last_mouse_pos = (event.x(), event.y())
             self._current_edits = []
-            # Begin a capture - tool may want to record state per tile
+            # Begin a capture - the active tool will capture prev tiles itself when stroke is called
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
