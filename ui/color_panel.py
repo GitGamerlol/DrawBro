@@ -1,12 +1,12 @@
-"""
-Simple color panel with current color and recent swatches.
-"""
 from __future__ import annotations
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QPushButton, QColorDialog
 from PySide6.QtGui import QColor
+from PySide6.QtCore import Signal
 
 
 class ColorPanel(QWidget):
+    color_changed = Signal(QColor)
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.current = QColor(0, 0, 0)
@@ -33,3 +33,4 @@ class ColorPanel(QWidget):
             if len(self.recent) > 10:
                 self.recent.pop()
             self._update_swatch()
+            self.color_changed.emit(col)

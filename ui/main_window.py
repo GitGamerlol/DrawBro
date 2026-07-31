@@ -30,6 +30,11 @@ class MainWindow(QMainWindow):
         self.layer_panel = LayerPanel(self.project.frames[0])
         self.timeline = TimelineWidget()
 
+        # Connect color panel to pen tool color
+        self.color_panel.color_changed.connect(self._on_color_changed)
+        # Connect canvas zoom changes to status bar display
+        # Will set initial message after status bar created
+
         # Layout using splitter
         central = QWidget()
         layout = QVBoxLayout()
@@ -60,6 +65,18 @@ class MainWindow(QMainWindow):
         status = QStatusBar()
         status.showMessage("Ready")
         self.setStatusBar(status)
+
+        # Now connect zoomChanged so the status bar updates
+        self.canvas_widget.zoomChanged.connect(self._on_zoom_changed)
+        self._on_zoom_changed(self.viewport.zoom)
+
+    def _on_color_changed(self, color: QColor) -> None:
+        rgba = (color.red(), color.green(), color.blue(), color.alpha())
+        # Update pen tool color
+        self.canvas_widget.pen_tool.color = rgba
+
+    def _on_zoom_changed(self, zoom: float) -> None:
+        self.statusBar().showMessage(f"Zoom: {zoom:.2f}x")
 
     def _apply_dark_theme(self) -> None:
         pal = self.palette()

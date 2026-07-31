@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget, QApplication
 from PySide6.QtGui import QPainter, QImage, QMouseEvent, QWheelEvent, QColor
-from PySide6.QtCore import Qt, QRect
+from PySide6.QtCore import Qt, QRect, Signal
 import numpy as np
 from typing import Optional, Tuple
+import math
 
 from core.viewport import Viewport
 from core.project import Project
@@ -15,15 +16,28 @@ from tools.pen import PenTool
 from tools.eraser import EraserTool
 
 
+def numpy_to_qimage(arr: np.ndarray) -> QImage:
+    """Convert an (H,W,4) uint8 RGBA numpy array to QImage safely.
+
+    Ensures the array is contiguous and returns a QImage that owns its data copy (to avoid memory lifetime issues).
+    """
+    if arr.ndim != 3 or arr.shape[2] != 4:
+        raise ValueError("Expected HxWx4 RGBA array")
+    if not arr.flags["C_CONTIGUOUS"]:
+        arr = np.ascontiguousarray(arr)
+    h, w, _ = arr.shape
+    # Create QImage from bytes copy to be safe across threads and lifetimes
+    return QImage(arr.tobytes(), w, h, QImage.Format_RGBA8888).copy()
+
+
 class CanvasWidget(QWidget):
     """Widget responsible for rendering the tiled canvas and routing input to tools.
 
-    Features implemented:
-    - Renders composited visible layers for the active frame by drawing tiles into the widget
-    - Middle-button panning
-    - Mouse-wheel zoom (smooth), with zoom centering on cursor
-    - Left-button drawing using the active tool (Pen or Eraser)
+    Signals:
+        zoomChanged(float) - emitted when zoom level changes
     """
+
+    zoomChanged = Signal(float)
 
     def __init__(self, project: Project, viewport: Optional[Viewport] = None, parent=None) -> None:
         super().__init__(parent)
@@ -66,8 +80,7 @@ class CanvasWidget(QWidget):
         view_w = wx1 - wx0
         view_h = wy1 - wy0
 
-        # For now composite layers by reading tiles and drawing each tile image at the right place
-        # We iterate tiles intersecting visible area for each layer and paint them in order
+        # Composite and draw tiles per layer
         for layer in frame.layers:
             if not layer.visible:
                 continue
@@ -75,11 +88,13 @@ class CanvasWidget(QWidget):
                 if tile.data is None:
                     continue
                 tx, ty = tile.coord
-                tile_px = tile.data.copy()  # copy to avoid sharing issues
-                h_t, w_t, _ = tile_px.shape
-                # Convert to QImage (RGBA8888)
-                arr = tile_px
-                qimg = QImage(arr.tobytes(), w_t, h_t, QImage.Format_RGBA8888)
+                # Avoid unnecessary full copies; ensure we don't modify tile.data
+                arr = tile.data
+                # Convert to QImage safely
+                try:
+                    qimg = numpy_to_qimage(arr)
+                except Exception:
+                    continue
                 # Tile top-left world coords
                 world_x = tx * layer.canvas.tile_size
                 world_y = ty * layer.canvas.tile_size
@@ -87,17 +102,25 @@ class CanvasWidget(QWidget):
                 sx, sy = self.viewport.world_to_screen(world_x, world_y)
                 dest_x = int(round(sx))
                 dest_y = int(round(sy))
+                # Adjust for device pixel ratio
+                dpr = self.devicePixelRatioF()
+                if dpr != 1.0:
+                    qimg.setDevicePixelRatio(dpr)
                 painter.drawImage(dest_x, dest_y, qimg)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
-        # Smooth zoom: scale factor per wheel notch
+        # Smooth zoom: use exponential scale per step for stable zooming
         angle = event.angleDelta().y()
         if angle == 0:
             return
         steps = angle / 120.0
-        factor = 1.0 + (0.1 * steps)
+        # base factor per step
+        base = 1.2
+        factor = math.pow(base, steps)
         pos = event.position()
         self.viewport.zoom_at(factor, pos.x(), pos.y())
+        # Emit signal and request repaint of viewport area
+        self.zoomChanged.emit(self.viewport.zoom)
         self.update()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -120,6 +143,7 @@ class CanvasWidget(QWidget):
             self.viewport.pan_x -= dx / self.viewport.zoom
             self.viewport.pan_y -= dy / self.viewport.zoom
             self._last_mouse_pos = (event.x(), event.y())
+            self.zoomChanged.emit(self.viewport.zoom)
             self.update()
             return
 
@@ -139,8 +163,9 @@ class CanvasWidget(QWidget):
             edits = self.active_tool.stroke((lx, ly), (cx, cy), layer.canvas)
             # Each edit is (tx,ty, prev, new) - accumulate
             self._current_edits.extend(edits)
+            # Invalidate only affected tiles on screen
+            self._invalidate_edits(edits, layer.canvas.tile_size)
             self._last_mouse_pos = current
-            self.update()
         else:
             self._last_mouse_pos = (event.x(), event.y())
         super().mouseMoveEvent(event)
@@ -154,16 +179,33 @@ class CanvasWidget(QWidget):
             if self._current_edits:
                 cmd = TileEditCommand(self.project.frames[0].layers[0].canvas, self._current_edits)
                 self.history.push(cmd)
+                # After pushing, ensure the UI updates for the whole modified area (already invalidated during drawing)
                 self._current_edits = []
             self.update()
         super().mouseReleaseEvent(event)
 
-
-if __name__ == "__main__":
-    import sys
-    from ui.main_window import MainWindow
-    app = QApplication(sys.argv)
-    w = CanvasWidget(Project())
-    w.resize(800, 600)
-    w.show()
-    sys.exit(app.exec())
+    def _invalidate_edits(self, edits: list[tuple[int, int, np.ndarray, np.ndarray]], tile_size: int) -> None:
+        if not edits:
+            return
+        # compute bounding rect in screen coordinates for all tiles
+        sx_min = None
+        sy_min = None
+        sx_max = None
+        sy_max = None
+        for tx, ty, prev, new in edits:
+            world_x = tx * tile_size
+            world_y = ty * tile_size
+            sx0, sy0 = self.viewport.world_to_screen(world_x, world_y)
+            sx1, sy1 = self.viewport.world_to_screen(world_x + tile_size, world_y + tile_size)
+            x0, y0 = int(math.floor(min(sx0, sx1))), int(math.floor(min(sy0, sy1)))
+            x1, y1 = int(math.ceil(max(sx0, sx1))), int(math.ceil(max(sy0, sy1)))
+            if sx_min is None:
+                sx_min, sy_min, sx_max, sy_max = x0, y0, x1, y1
+            else:
+                sx_min = min(sx_min, x0)
+                sy_min = min(sy_min, y0)
+                sx_max = max(sx_max, x1)
+                sy_max = max(sy_max, y1)
+        if sx_min is not None:
+            rect = QRect(sx_min, sy_min, max(1, sx_max - sx_min), max(1, sy_max - sy_min))
+            self.update(rect)
