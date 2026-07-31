@@ -17,6 +17,8 @@ from tools.bucket import BucketTool
 from tools.eyedropper import EyedropperTool
 from tools.smooth import SmoothTool
 
+from DrawBro.core.frame import Frame
+
 from core.layer_commands import (
     AddLayerCommand, RemoveLayerCommand, DuplicateLayerCommand, RenameLayerCommand,
     MoveLayerCommand, ChangeLayerOpacityCommand, ToggleVisibilityCommand, ToggleLockCommand
@@ -35,6 +37,11 @@ class MainWindow(QMainWindow):
 
         # Document model
         self.project = Project()
+
+        frame = Frame()
+        frame.add_layer()
+        
+        self.project.frames = [frame]
         self.viewport = Viewport()
 
         # History manager
