@@ -1,5 +1,5 @@
 from __future__ import annotations
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStatusBar, QSplitter
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStatusBar, QSplitter, QMessageBox
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtCore import Qt
 
@@ -17,6 +17,12 @@ from tools.bucket import BucketTool
 from tools.eyedropper import EyedropperTool
 from tools.smooth import SmoothTool
 
+from core.layer_commands import (
+    AddLayerCommand, RemoveLayerCommand, DuplicateLayerCommand, RenameLayerCommand,
+    MoveLayerCommand, ChangeLayerOpacityCommand, ToggleVisibilityCommand, ToggleLockCommand
+)
+from core.history import HistoryManager
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -29,11 +35,14 @@ class MainWindow(QMainWindow):
         self.project = Project()
         self.viewport = Viewport()
 
+        # History manager
+        self.history = HistoryManager()
+
         # Create widgets
         self.canvas_widget = CanvasWidget(self.project, self.viewport)
         self.toolbar = ToolBar()
         self.color_panel = ColorPanel()
-        self.layer_panel = LayerPanel(self.project.frames[0])
+        self.layer_panel = LayerPanel(self.project.frames[0], controller=self)
         self.timeline = TimelineWidget()
 
         # Additional tools
@@ -104,6 +113,48 @@ class MainWindow(QMainWindow):
         self.canvas_widget.zoomChanged.connect(self._on_zoom_changed)
         self._on_zoom_changed(self.viewport.zoom)
 
+    # Controller methods used by LayerPanel
+    def add_layer(self) -> None:
+        cmd = AddLayerCommand(self.project.frames[0])
+        self.history.push(cmd)
+        self.layer_panel.refresh()
+
+    def remove_layer(self, index: int) -> None:
+        cmd = RemoveLayerCommand(self.project.frames[0], index)
+        self.history.push(cmd)
+        self.layer_panel.refresh()
+
+    def duplicate_layer(self, index: int) -> None:
+        cmd = DuplicateLayerCommand(self.project.frames[0], index)
+        self.history.push(cmd)
+        self.layer_panel.refresh()
+
+    def rename_layer(self, index: int, name: str) -> None:
+        cmd = RenameLayerCommand(self.project.frames[0], index, name)
+        self.history.push(cmd)
+        self.layer_panel.refresh()
+
+    def move_layer(self, src: int, dst: int) -> None:
+        cmd = MoveLayerCommand(self.project.frames[0], src, dst)
+        self.history.push(cmd)
+        self.layer_panel.refresh()
+
+    def change_layer_opacity(self, index: int, opacity: float) -> None:
+        cmd = ChangeLayerOpacityCommand(self.project.frames[0], index, opacity)
+        self.history.push(cmd)
+        self.layer_panel.refresh()
+
+    def toggle_visible(self, index: int) -> None:
+        cmd = ToggleVisibilityCommand(self.project.frames[0], index)
+        self.history.push(cmd)
+        self.layer_panel.refresh()
+
+    def toggle_lock(self, index: int) -> None:
+        cmd = ToggleLockCommand(self.project.frames[0], index)
+        self.history.push(cmd)
+        self.layer_panel.refresh()
+
+    # Tool selection helpers
     def _select_pen(self) -> None:
         self._uncheck_all()
         self.toolbar.pen_action.setChecked(True)
