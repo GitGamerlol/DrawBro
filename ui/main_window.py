@@ -1,5 +1,5 @@
 from __future__ import annotations
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStatusBar, QSplitter, QMessageBox
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStatusBar, QSplitter
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtCore import Qt
 
@@ -22,6 +22,8 @@ from core.layer_commands import (
     MoveLayerCommand, ChangeLayerOpacityCommand, ToggleVisibilityCommand, ToggleLockCommand
 )
 from core.history import HistoryManager
+from animation.onion_skin import make_onion_overlays
+from PIL.ImageQt import ImageQt
 
 
 class MainWindow(QMainWindow):
@@ -42,8 +44,8 @@ class MainWindow(QMainWindow):
         self.canvas_widget = CanvasWidget(self.project, self.viewport)
         self.toolbar = ToolBar()
         self.color_panel = ColorPanel()
-        self.layer_panel = LayerPanel(self.project.frames[0], controller=self)
-        self.timeline = TimelineWidget()
+        self.layer_panel = LayerPanel(self.project.frames[self.project.current_frame], controller=self)
+        self.timeline = TimelineWidget(self.project)
 
         # Additional tools
         self.pen_tool = self.canvas_widget.pen_tool
@@ -77,6 +79,10 @@ class MainWindow(QMainWindow):
 
         # Connect canvas color-picked signal
         self.canvas_widget.colorPicked.connect(self._on_color_picked)
+
+        # Connect timeline signals
+        self.timeline.frameChanged.connect(self._on_frame_changed)
+        self.timeline.playToggled.connect(self._on_play_toggled)
 
         # Layout using splitter
         central = QWidget()
@@ -113,44 +119,55 @@ class MainWindow(QMainWindow):
         self.canvas_widget.zoomChanged.connect(self._on_zoom_changed)
         self._on_zoom_changed(self.viewport.zoom)
 
+    def _on_frame_changed(self, idx: int) -> None:
+        # Update layer panel to reference new current frame
+        self.layer_panel.frame = self.project.frames[self.project.current_frame]
+        self.layer_panel.refresh()
+        # Trigger canvas to update (canvas draws current_frame)
+        self.canvas_widget.update()
+
+    def _on_play_toggled(self, playing: bool) -> None:
+        # placeholder: could update UI
+        pass
+
     # Controller methods used by LayerPanel
     def add_layer(self) -> None:
-        cmd = AddLayerCommand(self.project.frames[0])
+        cmd = AddLayerCommand(self.project.frames[self.project.current_frame])
         self.history.push(cmd)
         self.layer_panel.refresh()
 
     def remove_layer(self, index: int) -> None:
-        cmd = RemoveLayerCommand(self.project.frames[0], index)
+        cmd = RemoveLayerCommand(self.project.frames[self.project.current_frame], index)
         self.history.push(cmd)
         self.layer_panel.refresh()
 
     def duplicate_layer(self, index: int) -> None:
-        cmd = DuplicateLayerCommand(self.project.frames[0], index)
+        cmd = DuplicateLayerCommand(self.project.frames[self.project.current_frame], index)
         self.history.push(cmd)
         self.layer_panel.refresh()
 
     def rename_layer(self, index: int, name: str) -> None:
-        cmd = RenameLayerCommand(self.project.frames[0], index, name)
+        cmd = RenameLayerCommand(self.project.frames[self.project.current_frame], index, name)
         self.history.push(cmd)
         self.layer_panel.refresh()
 
     def move_layer(self, src: int, dst: int) -> None:
-        cmd = MoveLayerCommand(self.project.frames[0], src, dst)
+        cmd = MoveLayerCommand(self.project.frames[self.project.current_frame], src, dst)
         self.history.push(cmd)
         self.layer_panel.refresh()
 
     def change_layer_opacity(self, index: int, opacity: float) -> None:
-        cmd = ChangeLayerOpacityCommand(self.project.frames[0], index, opacity)
+        cmd = ChangeLayerOpacityCommand(self.project.frames[self.project.current_frame], index, opacity)
         self.history.push(cmd)
         self.layer_panel.refresh()
 
     def toggle_visible(self, index: int) -> None:
-        cmd = ToggleVisibilityCommand(self.project.frames[0], index)
+        cmd = ToggleVisibilityCommand(self.project.frames[self.project.current_frame], index)
         self.history.push(cmd)
         self.layer_panel.refresh()
 
     def toggle_lock(self, index: int) -> None:
-        cmd = ToggleLockCommand(self.project.frames[0], index)
+        cmd = ToggleLockCommand(self.project.frames[self.project.current_frame], index)
         self.history.push(cmd)
         self.layer_panel.refresh()
 

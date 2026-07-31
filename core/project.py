@@ -1,5 +1,7 @@
 """
 Project container: manages frames, sprite settings, document metadata, and export options.
+
+Added current_frame index and frame management helpers.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -19,17 +21,29 @@ class Project:
     sprite_mode: bool = True
     metadata: dict = field(default_factory=dict)
 
+    # current active frame index
+    current_frame: int = 0
+
     def add_frame(self, index: int | None = None, frame: Frame | None = None) -> int:
         f = frame or Frame()
         if index is None:
             self.frames.append(f)
-            return len(self.frames) - 1
+            idx = len(self.frames) - 1
+            self.current_frame = idx
+            return idx
         else:
             self.frames.insert(index, f)
+            self.current_frame = index
             return index
 
     def remove_frame(self, index: int) -> Frame:
-        return self.frames.pop(index)
+        if index < 0 or index >= len(self.frames):
+            raise IndexError("frame index out of range")
+        removed = self.frames.pop(index)
+        # adjust current_frame
+        if self.current_frame >= len(self.frames):
+            self.current_frame = max(0, len(self.frames) - 1)
+        return removed
 
     def duplicate_frame(self, index: int) -> int:
         src = self.frames[index]
@@ -37,4 +51,10 @@ class Project:
         import copy
         dup = copy.deepcopy(src)
         self.frames.insert(index + 1, dup)
+        self.current_frame = index + 1
         return index + 1
+
+    def set_current_frame(self, index: int) -> None:
+        if index < 0 or index >= len(self.frames):
+            raise IndexError("frame index out of range")
+        self.current_frame = index
