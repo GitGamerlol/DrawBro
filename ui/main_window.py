@@ -1,19 +1,15 @@
-"""
-Main window skeleton (PySide6). This file creates the main window and
-provides placeholder areas for the canvas and panels.
-
-Later: implement a CanvasWidget that renders from core.Frame and Viewport,
-connect to toolbar, layer panel, timeline, etc.
-"""
 from __future__ import annotations
-from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStatusBar
-)
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStatusBar, QSplitter
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtCore import Qt
 
 from core.viewport import Viewport
 from core.project import Project
+from ui.canvas_widget import CanvasWidget
+from ui.toolbar import ToolBar
+from ui.color_panel import ColorPanel
+from ui.layer_panel import LayerPanel
+from animation.timeline import TimelineWidget
 
 
 class MainWindow(QMainWindow):
@@ -27,24 +23,37 @@ class MainWindow(QMainWindow):
         self.project = Project()
         self.viewport = Viewport()
 
-        # Central canvas placeholder (will be replaced by CanvasWidget)
+        # Create widgets
+        self.canvas_widget = CanvasWidget(self.project, self.viewport)
+        self.toolbar = ToolBar()
+        self.color_panel = ColorPanel()
+        self.layer_panel = LayerPanel(self.project.frames[0])
+        self.timeline = TimelineWidget()
+
+        # Layout using splitter
         central = QWidget()
-        layout = QHBoxLayout()
+        layout = QVBoxLayout()
         central.setLayout(layout)
 
+        top_bar = self.toolbar.widget()
+        layout.addWidget(top_bar)
+
+        splitter = QSplitter()
         canvas_area = QWidget()
         canvas_layout = QVBoxLayout()
         canvas_area.setLayout(canvas_layout)
-        canvas_layout.addWidget(QLabel("Canvas will appear here (CanvasWidget)"))
-        layout.addWidget(canvas_area, 1)
+        canvas_layout.addWidget(self.canvas_widget)
+        splitter.addWidget(canvas_area)
 
-        # Right-side placeholder for panels
-        panels = QWidget()
-        panels_layout = QVBoxLayout()
-        panels.setLayout(panels_layout)
-        panels_layout.addWidget(QLabel("Layer Panel"))
-        panels_layout.addWidget(QLabel("Color Panel"))
-        layout.addWidget(panels)
+        right_panel = QWidget()
+        right_layout = QVBoxLayout()
+        right_panel.setLayout(right_layout)
+        right_layout.addWidget(self.layer_panel)
+        right_layout.addWidget(self.color_panel)
+        splitter.addWidget(right_panel)
+
+        layout.addWidget(splitter)
+        layout.addWidget(self.timeline)
 
         self.setCentralWidget(central)
 
