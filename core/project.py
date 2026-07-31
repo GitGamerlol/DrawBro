@@ -1,11 +1,12 @@
 """
 Project container: manages frames, sprite settings, document metadata, and export options.
 
-Added current_frame index and frame management helpers.
+Added current_frame index and frame management helpers as well as a reference_images list to
+hold ReferenceImage objects (UI-only, not part of exports).
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Any
 from .frame import Frame
 
 
@@ -23,6 +24,9 @@ class Project:
 
     # current active frame index
     current_frame: int = 0
+
+    # UI-only reference images; they must NEVER be exported.
+    reference_images: List[Any] = field(default_factory=list)
 
     def add_frame(self, index: int | None = None, frame: Frame | None = None) -> int:
         f = frame or Frame()
@@ -58,3 +62,11 @@ class Project:
         if index < 0 or index >= len(self.frames):
             raise IndexError("frame index out of range")
         self.current_frame = index
+
+    # Reference image helpers (UI-only)
+    def add_reference(self, ref) -> None:
+        self.reference_images.append(ref)
+
+    def remove_reference(self, ref) -> None:
+        if ref in self.reference_images:
+            self.reference_images.remove(ref)
