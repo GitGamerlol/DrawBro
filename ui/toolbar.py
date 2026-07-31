@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget, QToolBar, QAction, QSpinBox, QCheckBox, QLabel
+from PySide6.QtWidgets import QWidget, QToolBar, QSpinBox, QCheckBox, QLabel
+from PySide6.QtGui import QAction
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt
 
