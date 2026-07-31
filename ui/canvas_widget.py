@@ -62,6 +62,10 @@ class CanvasWidget(QWidget):
         # State to accumulate tile edits while drawing
         self._current_edits: list[tuple[int, int, np.ndarray, np.ndarray]] = []
 
+        # Preview image for shape tools
+        self._preview_qimage: Optional[QImage] = None
+        self._preview_world_pos: Optional[Tuple[int, int]] = None
+
     def sizeHint(self):
         return super().sizeHint()
 
@@ -108,6 +112,18 @@ class CanvasWidget(QWidget):
                     qimg.setDevicePixelRatio(dpr)
                 painter.drawImage(dest_x, dest_y, qimg)
 
+        # Draw preview overlay (if any)
+        if self._preview_qimage is not None and self._preview_world_pos is not None:
+            px, py = self._preview_world_pos
+            sx, sy = self.viewport.world_to_screen(px, py)
+            dest_x = int(round(sx))
+            dest_y = int(round(sy))
+            qimg = self._preview_qimage
+            dpr = self.devicePixelRatioF()
+            if dpr != 1.0:
+                qimg.setDevicePixelRatio(dpr)
+            painter.drawImage(dest_x, dest_y, qimg)
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         # Smooth zoom: use exponential scale per step for stable zooming
         angle = event.angleDelta().y()
@@ -132,7 +148,13 @@ class CanvasWidget(QWidget):
             # Start drawing
             self._last_mouse_pos = (event.x(), event.y())
             self._current_edits = []
-            # Begin a capture - the active tool will capture prev tiles itself when stroke is called
+            # If active tool supports start/update/finish (shape tool), call start
+            world = self.viewport.screen_to_world(float(event.x()), float(event.y()))
+            if hasattr(self.active_tool, "start") and hasattr(self.active_tool, "finish"):
+                try:
+                    self.active_tool.start(world)
+                except Exception:
+                    pass
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
@@ -148,23 +170,39 @@ class CanvasWidget(QWidget):
             return
 
         buttons = event.buttons()
+        world = self.viewport.screen_to_world(float(event.x()), float(event.y()))
         if buttons & Qt.LeftButton and self._last_mouse_pos is not None:
             # Drawing
             last = self._last_mouse_pos
             current = (event.x(), event.y())
-            # Convert to world coords
-            lx, ly = self.viewport.screen_to_world(float(last[0]), float(last[1]))
-            cx, cy = self.viewport.screen_to_world(float(current[0]), float(current[1]))
-            # Ask active tool to stroke between points into the active layer's canvas
-            frame = self.project.frames[0]
-            if not frame.layers:
-                frame.add_layer()
-            layer = frame.layers[0]
-            edits = self.active_tool.stroke((lx, ly), (cx, cy), layer.canvas)
-            # Each edit is (tx,ty, prev, new) - accumulate
-            self._current_edits.extend(edits)
-            # Invalidate only affected tiles on screen
-            self._invalidate_edits(edits, layer.canvas.tile_size)
+            # If active tool is a shape tool, update preview
+            if hasattr(self.active_tool, "update") and hasattr(self.active_tool, "get_preview"):
+                try:
+                    self.active_tool.update(world)
+                    preview_arr, px, py = self.active_tool.get_preview()
+                    # convert preview to QImage and store
+                    try:
+                        qimg = numpy_to_qimage(preview_arr)
+                        self._preview_qimage = qimg
+                        self._preview_world_pos = (px, py)
+                        # Invalidate preview bbox
+                        self._invalidate_preview(px, py, preview_arr.shape[1], preview_arr.shape[0])
+                    except Exception:
+                        self._preview_qimage = None
+                        self._preview_world_pos = None
+                except Exception:
+                    pass
+            else:
+                # Brush-like tools
+                lx, ly = self.viewport.screen_to_world(float(last[0]), float(last[1]))
+                cx, cy = self.viewport.screen_to_world(float(current[0]), float(current[1]))
+                frame = self.project.frames[0]
+                if not frame.layers:
+                    frame.add_layer()
+                layer = frame.layers[0]
+                edits = self.active_tool.stroke((lx, ly), (cx, cy), layer.canvas)
+                self._current_edits.extend(edits)
+                self._invalidate_edits(edits, layer.canvas.tile_size)
             self._last_mouse_pos = current
         else:
             self._last_mouse_pos = (event.x(), event.y())
@@ -175,13 +213,30 @@ class CanvasWidget(QWidget):
             self._dragging_pan = False
             self.setCursor(Qt.ArrowCursor)
         elif event.button() == Qt.LeftButton:
-            # Commit current edits as a single history command
-            if self._current_edits:
-                cmd = TileEditCommand(self.project.frames[0].layers[0].canvas, self._current_edits)
-                self.history.push(cmd)
-                # After pushing, ensure the UI updates for the whole modified area (already invalidated during drawing)
-                self._current_edits = []
-            self.update()
+            # If active tool is shape tool, finish and commit
+            if hasattr(self.active_tool, "finish") and hasattr(self.active_tool, "get_preview"):
+                frame = self.project.frames[0]
+                if not frame.layers:
+                    frame.add_layer()
+                layer = frame.layers[0]
+                try:
+                    edits = self.active_tool.finish(layer.canvas)
+                except Exception:
+                    edits = []
+                if edits:
+                    cmd = TileEditCommand(layer.canvas, edits)
+                    self.history.push(cmd)
+                # clear preview
+                self._preview_qimage = None
+                self._preview_world_pos = None
+                self.update()
+            else:
+                # Commit current edits as a single history command
+                if self._current_edits:
+                    cmd = TileEditCommand(self.project.frames[0].layers[0].canvas, self._current_edits)
+                    self.history.push(cmd)
+                    self._current_edits = []
+                self.update()
         super().mouseReleaseEvent(event)
 
     def _invalidate_edits(self, edits: list[tuple[int, int, np.ndarray, np.ndarray]], tile_size: int) -> None:
@@ -209,3 +264,21 @@ class CanvasWidget(QWidget):
         if sx_min is not None:
             rect = QRect(sx_min, sy_min, max(1, sx_max - sx_min), max(1, sy_max - sy_min))
             self.update(rect)
+
+    def _invalidate_preview(self, world_x: int, world_y: int, w: int, h: int) -> None:
+        sx0, sy0 = self.viewport.world_to_screen(world_x, world_y)
+        sx1, sy1 = self.viewport.world_to_screen(world_x + w, world_y + h)
+        x0, y0 = int(math.floor(min(sx0, sx1))), int(math.floor(min(sy0, sy1)))
+        x1, y1 = int(math.ceil(max(sx0, sx1))), int(math.ceil(max(sy0, sy1)))
+        rect = QRect(x0, y0, max(1, x1 - x0), max(1, y1 - y0))
+        self.update(rect)
+
+
+if __name__ == "__main__":
+    import sys
+    from ui.main_window import MainWindow
+    app = QApplication(sys.argv)
+    w = CanvasWidget(Project())
+    w.resize(800, 600)
+    w.show()
+    sys.exit(app.exec())
