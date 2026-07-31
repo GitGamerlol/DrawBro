@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStatusBar, QSplitter
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtCore import Qt
@@ -14,6 +13,9 @@ from animation.timeline import TimelineWidget
 from tools.pen import PenTool
 from tools.eraser import EraserTool
 from tools.shape_tools import LineTool, RectangleTool, EllipseTool
+from tools.bucket import BucketTool
+from tools.eyedropper import EyedropperTool
+from tools.smooth import SmoothTool
 
 
 class MainWindow(QMainWindow):
@@ -40,6 +42,9 @@ class MainWindow(QMainWindow):
         self.line_tool = LineTool()
         self.rect_tool = RectangleTool()
         self.ellipse_tool = EllipseTool()
+        self.bucket_tool = BucketTool()
+        self.eyedrop_tool = EyedropperTool()
+        self.smooth_tool = SmoothTool()
 
         # Connect color panel to pen tool color
         self.color_panel.color_changed.connect(self._on_color_changed)
@@ -52,8 +57,17 @@ class MainWindow(QMainWindow):
         self.toolbar.line_action.triggered.connect(self._select_line)
         self.toolbar.rect_action.triggered.connect(self._select_rect)
         self.toolbar.ellipse_action.triggered.connect(self._select_ellipse)
+        self.toolbar.bucket_action.triggered.connect(self._select_bucket)
+        self.toolbar.eyedrop_action.triggered.connect(self._select_eyedrop)
         # Default selection
         self.toolbar.pen_action.setChecked(True)
+
+        # Connect stroke width and fill checkbox
+        self.toolbar.stroke_spin.valueChanged.connect(self._on_stroke_width_changed)
+        self.toolbar.fill_checkbox.toggled.connect(self._on_fill_toggled)
+
+        # Connect canvas color-picked signal
+        self.canvas_widget.colorPicked.connect(self._on_color_picked)
 
         # Layout using splitter
         central = QWidget()
@@ -115,12 +129,22 @@ class MainWindow(QMainWindow):
         self.toolbar.ellipse_action.setChecked(True)
         self.canvas_widget.active_tool = self.ellipse_tool
 
-    def _uncheck_all(self) -> None:
-        for a in (self.toolbar.pen_action, self.toolbar.eraser_action, self.toolbar.line_action, self.toolbar.rect_action, self.toolbar.ellipse_action):
-            a.setChecked(False)
+    def _select_bucket(self) -> None:
+        self._uncheck_all()
+        self.toolbar.bucket_action.setChecked(True)
+        self.canvas_widget.active_tool = self.bucket_tool
 
-    def _on_color_changed(self, color: QColor) -> None:
-        rgba = (color.red(), color.green(), color.blue(), color.alpha())
+    def _select_eyedrop(self) -> None:
+        self._uncheck_all()
+        self.toolbar.eyedrop_action.setChecked(True)
+        self.canvas_widget.active_tool = self.eyedrop_tool
+
+    def _on_color_changed(self, color):
+        # QColor may be passed
+        try:
+            rgba = (color.red(), color.green(), color.blue(), color.alpha())
+        except Exception:
+            rgba = color
         # Update pen tool color
         self.canvas_widget.pen_tool.color = rgba
         # Also update fill/stroke colors for shape tools
@@ -130,8 +154,28 @@ class MainWindow(QMainWindow):
         self.ellipse_tool.stroke_color = rgba
         self.ellipse_tool.fill_color = rgba
 
+    def _on_color_picked(self, color):
+        # color is a QColor
+        self.color_panel.current = color
+        self.color_panel._update_swatch()
+        self._on_color_changed(color)
+
     def _on_zoom_changed(self, zoom: float) -> None:
         self.statusBar().showMessage(f"Zoom: {zoom:.2f}x")
+
+    def _on_stroke_width_changed(self, val: int) -> None:
+        self.pen_tool.size = float(val)
+        self.line_tool.stroke_width = val
+        self.rect_tool.stroke_width = val
+        self.ellipse_tool.stroke_width = val
+
+    def _on_fill_toggled(self, checked: bool) -> None:
+        self.rect_tool.fill = checked
+        self.ellipse_tool.fill = checked
+
+    def _uncheck_all(self) -> None:
+        for a in (self.toolbar.pen_action, self.toolbar.eraser_action, self.toolbar.line_action, self.toolbar.rect_action, self.toolbar.ellipse_action, self.toolbar.bucket_action, self.toolbar.eyedrop_action):
+            a.setChecked(False)
 
     def _apply_dark_theme(self) -> None:
         pal = self.palette()

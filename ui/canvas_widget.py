@@ -35,9 +35,11 @@ class CanvasWidget(QWidget):
 
     Signals:
         zoomChanged(float) - emitted when zoom level changes
+        colorPicked(QColor) - emitted when eyedropper samples a color
     """
 
     zoomChanged = Signal(float)
+    colorPicked = Signal(QColor)
 
     def __init__(self, project: Project, viewport: Optional[Viewport] = None, parent=None) -> None:
         super().__init__(parent)
@@ -150,11 +152,21 @@ class CanvasWidget(QWidget):
             self._current_edits = []
             # If active tool supports start/update/finish (shape tool), call start
             world = self.viewport.screen_to_world(float(event.x()), float(event.y()))
-            if hasattr(self.active_tool, "start") and hasattr(self.active_tool, "finish"):
+            # Eyedropper immediate pick
+            if hasattr(self.active_tool, "pick"):
                 try:
-                    self.active_tool.start(world)
+                    col = self.active_tool.pick(world[0], world[1], self.project)
+                    if col is not None:
+                        qcol = QColor(col[0], col[1], col[2], col[3])
+                        self.colorPicked.emit(qcol)
                 except Exception:
                     pass
+            else:
+                if hasattr(self.active_tool, "start") and hasattr(self.active_tool, "finish"):
+                    try:
+                        self.active_tool.start(world)
+                    except Exception:
+                        pass
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
@@ -200,9 +212,23 @@ class CanvasWidget(QWidget):
                 if not frame.layers:
                     frame.add_layer()
                 layer = frame.layers[0]
-                edits = self.active_tool.stroke((lx, ly), (cx, cy), layer.canvas)
-                self._current_edits.extend(edits)
-                self._invalidate_edits(edits, layer.canvas.tile_size)
+                # Bucket tool: ignore dragging
+                if hasattr(self.active_tool, "fill"):
+                    pass
+                elif hasattr(self.active_tool, "apply_at"):
+                    # Smooth tool: apply at current point on mouse move for interactive smoothing
+                    try:
+                        edits = self.active_tool.apply_at(int(round(cx)), int(round(cy)), layer.canvas)
+                        if edits:
+                            cmd = TileEditCommand(layer.canvas, edits)
+                            self.history.push(cmd)
+                            self._invalidate_edits(edits, layer.canvas.tile_size)
+                    except Exception:
+                        pass
+                else:
+                    edits = self.active_tool.stroke((lx, ly), (cx, cy), layer.canvas)
+                    self._current_edits.extend(edits)
+                    self._invalidate_edits(edits, layer.canvas.tile_size)
             self._last_mouse_pos = current
         else:
             self._last_mouse_pos = (event.x(), event.y())
@@ -213,8 +239,23 @@ class CanvasWidget(QWidget):
             self._dragging_pan = False
             self.setCursor(Qt.ArrowCursor)
         elif event.button() == Qt.LeftButton:
-            # If active tool is shape tool, finish and commit
-            if hasattr(self.active_tool, "finish") and hasattr(self.active_tool, "get_preview"):
+            world = self.viewport.screen_to_world(float(event.x()), float(event.y()))
+            # Bucket tool
+            if hasattr(self.active_tool, "fill"):
+                frame = self.project.frames[0]
+                if not frame.layers:
+                    frame.add_layer()
+                layer = frame.layers[0]
+                try:
+                    edits = self.active_tool.fill(int(round(world[0])), int(round(world[1])), layer.canvas, layer.canvas.tiles.get((0,0)).data[0,0] if False else (0,0,0,255))
+                except Exception:
+                    edits = []
+                if edits:
+                    cmd = TileEditCommand(layer.canvas, edits)
+                    self.history.push(cmd)
+                    self._invalidate_edits(edits, layer.canvas.tile_size)
+            # Shape tool finish
+            elif hasattr(self.active_tool, "finish") and hasattr(self.active_tool, "get_preview"):
                 frame = self.project.frames[0]
                 if not frame.layers:
                     frame.add_layer()
@@ -272,13 +313,3 @@ class CanvasWidget(QWidget):
         x1, y1 = int(math.ceil(max(sx0, sx1))), int(math.ceil(max(sy0, sy1)))
         rect = QRect(x0, y0, max(1, x1 - x0), max(1, y1 - y0))
         self.update(rect)
-
-
-if __name__ == "__main__":
-    import sys
-    from ui.main_window import MainWindow
-    app = QApplication(sys.argv)
-    w = CanvasWidget(Project())
-    w.resize(800, 600)
-    w.show()
-    sys.exit(app.exec())
